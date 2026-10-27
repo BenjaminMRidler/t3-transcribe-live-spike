@@ -6,7 +6,8 @@ import {
   corpusWer,
   percentile,
   summarizeLatencies,
-  tailCoverage
+  tailCoverage,
+  werAgainstBestPrefix
 } from '../lib/metrics.mjs';
 
 test('normalizeTranscript ignores case, punctuation and curly apostrophes', () => {
@@ -113,4 +114,12 @@ test('tailCoverage counts deletions when the transcript stops early (review R-5b
 test('summarizeLatencies reports n, percentiles, max and mean', () => {
   const summary = summarizeLatencies([100, 200, 300, 400]);
   assert.deepEqual(summary, { n: 4, p50: 200, p90: 400, p95: 400, max: 400, mean: 250 });
+});
+
+test('werAgainstBestPrefix ignores reference words after the recording stopped', () => {
+  const result = werAgainstBestPrefix('one two three four five six', 'one two three four', 5);
+  assert.deepEqual(result, { wer: 0, trimmedWords: 2, refWords: 4, errors: 0 });
+  const capped = werAgainstBestPrefix('one two three four five six', 'one two', 1);
+  assert.equal(capped.trimmedWords, 1);
+  assert.equal(capped.errors, 3);
 });
