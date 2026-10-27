@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>H2 MediaRecorder harness</title>
+  <style>
+    body { font: 16px/1.4 system-ui, sans-serif; margin: 16px; }
+    button { font-size: 18px; padding: 8px 16px; }
+    pre { white-space: pre-wrap; background: #f4f4f4; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Scope 1.6 H2 harness</h1>
+  <p>Plays a known speech clip through Web Audio into MediaRecorder and uploads every chunk.
+     No microphone is used. Parameters come from the URL (see harness.js).</p>
+  <button id="start" type="button">Start</button>
+  <pre id="status">idle</pre>
+  <script src="harness.js"></script>
+</body>
+</html>

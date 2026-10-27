@@ -1,0 +1,123 @@
+# Scope 1.6 H2/H4: MediaRecorder chunk checks in real browsers, including real Safari on a
+# GitHub-hosted macOS runner (Apple hardware). No secrets are used by this workflow.
+name: h2-browsers
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: 'full or quick'
+        default: 'full'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  FFMPEG_IMAGE: mwader/static-ffmpeg:7.1@sha256:a8090df5f5608daef387e1b2e93b98aaacb4d92153ad904e7d715c725724fca4
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Unit tests
+        run: node --test "test/*.test.mjs"
+      - name: Cache LibriSpeech test-clean (downloaded at run time, never committed)
+        uses: actions/cache@v4
+        with:
+          path: out/corpus/test-clean.tar.gz
+          key: librispeech-test-clean-v1
+      - name: Download and extract LibriSpeech test-clean
+        run: |
+          mkdir -p out/corpus
+          if [ ! -f out/corpus/test-clean.tar.gz ]; then
+            curl -sSL --fail --retry 3 -o out/corpus/test-clean.tar.gz https://us.openslr.org/resources/12/test-clean.tar.gz \
+              || curl -sSL --fail --retry 3 -o out/corpus/test-clean.tar.gz https://www.openslr.org/resources/12/test-clean.tar.gz
+          fi
+          echo "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23  out/corpus/test-clean.tar.gz" | sha256sum -c -
+          tar -xzf out/corpus/test-clean.tar.gz -C out/corpus
+      - run: docker pull "$FFMPEG_IMAGE"
+      - name: Build corpus and H2 sources
+        run: |
+          node h1h3/build-corpus.mjs
+          node h2/prepare-sources.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h2-sources
+          path: out/h2/sources
+
+  browser:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, browser: chrome }
+          - { os: windows-latest, browser: edge }
+          - { os: windows-latest, browser: firefox }
+          - { os: macos-latest, browser: safari }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          name: h2-sources
+          path: out/h2/sources
+      - name: Enable safaridriver (real Safari)
+        if: matrix.browser == 'safari'
+        run: |
+          sudo safaridriver --enable
+          sw_vers
+          /usr/bin/safaridriver --version || true
+      - name: Record browsers with the harness
+        shell: bash
+        run: |
+          node h2/server.mjs --out out/h2 > out/h2/server-${{ matrix.browser }}.log 2>&1 &
+          sleep 2
+          node h2/drive.mjs --browser ${{ matrix.browser }} --label ${{ runner.os }} --plan ${{ github.event.inputs.plan || 'full' }} --out out/h2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h2-runs-${{ matrix.browser }}-${{ runner.os }}
+          path: |
+            out/h2/runs
+            out/h2/driver-*.json
+            out/h2/server-*.log
+
+  check:
+    needs: browser
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          name: h2-sources
+          path: out/h2/sources
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: h2-runs-*
+          path: out/h2
+          merge-multiple: true
+      - run: docker pull "$FFMPEG_IMAGE"
+      - name: Checks C0-C5 with the pinned ffmpeg
+        run: node h2/check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h2-checks
+          path: out/h2/checks.json
