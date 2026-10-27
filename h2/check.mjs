@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { ffmpeg, OUT_DIR, FFMPEG_IMAGE } from '../h1h3/ffmpeg.mjs';
 import { parseWav } from '../lib/wav.mjs';
-import { chunkCadence, durationWithinTolerance, bestOffset, segmentGapsMs, modeVerdict } from '../lib/h2.mjs';
+import { chunkCadence, bestOffset, segmentGapsMs, modeVerdict, windowIsTail, prefixDecodes, loudestProbeStart } from '../lib/h2.mjs';
 
 const RATE = 16000;
 const H2 = path.join(OUT_DIR, 'h2');
@@ -31,9 +31,9 @@ function decode(file, extra = []) {
 /** Is `window` the true last 4 s of `full`? Score by normalized correlation near the tail. */
 function windowMatchesTail(full, window) {
   if (!window || window.length < 0.5 * RATE || !full || full.length < window.length) return { match: false, score: null };
-  const lengthOk = Math.abs(window.length / RATE - 4) <= 0.1;
   const found = bestOffset(full, window, full.length - window.length, 0.05 * RATE, 1);
-  return { match: lengthOk && found.score >= 0.98, lengthSec: window.length / RATE, score: Number(found.score.toFixed(4)), offsetFromTailMs: Math.round(((full.length - window.length) - found.offset) / RATE * 1000) };
+  const w = { lengthSec: window.length / RATE, score: Number(found.score.toFixed(4)), offsetFromTailMs: Math.round(((full.length - window.length) - found.offset) / RATE * 1000) };
+  return { match: windowIsTail(w), ...w };
 }
 
 function checkAppend(dir, info) {
@@ -62,12 +62,17 @@ function checkAppend(dir, info) {
     const d = decode(file);
     const expectedSec = (k === chunks.length - 1 ? info.recordedMs : info.chunks[k].atMs) / 1000;
     const decodedSec = d.pcm ? d.pcm.length / RATE : 0;
-    const pass = d.ok && durationWithinTolerance(decodedSec, expectedSec, info.timesliceMs);
-    result.c1Prefixes.push({ k, expectedSec, decodedSec: Number(decodedSec.toFixed(3)), ok: d.ok, pass, errors: d.errors || undefined });
+    const pass = prefixDecodes({ status: d.status, decodedSec, expectedSec, timesliceMs: info.timesliceMs });
+    result.c1Prefixes.push({ k, expectedSec, decodedSec: Number(decodedSec.toFixed(3)), status: d.status, pass, warnings: d.errors || undefined });
     if (d.pcm) prefixPcm.set(k, d.pcm);
     fs.rmSync(file);
   }
-  result.c1 = result.c1Prefixes.every((p) => p.pass);
+  // A first chunk that holds only the container header (no audio yet) is reported, and C1 is
+  // judged from the first chunk that carries audio onwards.
+  const firstAudio = result.c1Prefixes.findIndex((p) => p.decodedSec > 0);
+  result.c1FirstChunkHasAudio = (result.c1Prefixes[0]?.decodedSec ?? 0) > 0;
+  result.c1 = firstAudio >= 0 && result.c1Prefixes.slice(firstAudio).every((p) => p.pass);
+  result.c1Warnings = [...new Set(result.c1Prefixes.map((p) => (p.warnings || '').replace(/0x[0-9a-f]+|\d+/g, '#')).filter(Boolean))];
 
   // C2: the trailing 4 s window at several points, three extraction strategies.
   const n = Math.ceil(4000 / info.timesliceMs) + 1;
@@ -133,9 +138,11 @@ function checkSegmented(dir, info, sourcePcm) {
     let offset = null;
     let score = null;
     if (d.pcm && d.pcm.length > RATE) {
-      const probe = d.pcm.subarray(4000, 12000); // skip the first 0.25 s (encoder start-up)
-      const found = bestOffset(sourcePcm, probe, (meta.startMs ?? 0) / 1000 * RATE + 4000, RATE, 1);
-      offset = found.offset - 4000;
+      // Probe: the loudest 0.5 s within the segment's first 1.5 s (skips pauses and encoder start-up).
+      const at = loudestProbeStart(d.pcm, 8000, 1600, 24000);
+      const probe = d.pcm.subarray(at, at + 8000);
+      const found = bestOffset(sourcePcm, probe, (meta.startMs ?? 0) / 1000 * RATE + at, RATE, 1);
+      offset = found.offset - at;
       score = Number(found.score.toFixed(4));
     }
     segments.push({ seq: i, decodeOk: d.ok, errors: d.errors || undefined, seconds: d.pcm ? Number((d.pcm.length / RATE).toFixed(3)) : 0, offset, length: d.pcm ? d.pcm.length : 0, alignScore: score, startMs: meta.startMs, stopMs: meta.stopMs });

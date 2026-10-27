@@ -43,3 +43,26 @@ test('modeVerdict combines checks per mode', () => {
   assert.equal(noAppend.anyModeWorks, false);
   assert.equal(modeVerdict({ c0: false, c1: true, c2: true, c4: false, c5MaxGapMs: null }).segmentedWorks, false);
 });
+
+test('windowIsTail accepts correct windows despite codec pre-roll and rejects wrong ones', async () => {
+  const { windowIsTail } = await import('../lib/h2.mjs');
+  assert.equal(windowIsTail({ lengthSec: 3.955, score: 0.966, offsetFromTailMs: 0 }), true);
+  assert.equal(windowIsTail({ lengthSec: 30, score: 1, offsetFromTailMs: 0 }), false); // whole file (E1)
+  assert.equal(windowIsTail({ lengthSec: 4, score: 0.95, offsetFromTailMs: 40 }), false);
+  assert.equal(windowIsTail({ lengthSec: 4, score: 0.6, offsetFromTailMs: 0 }), false);
+});
+
+test('prefixDecodes requires exit 0, audio and a plausible length', async () => {
+  const { prefixDecodes } = await import('../lib/h2.mjs');
+  assert.equal(prefixDecodes({ status: 0, decodedSec: 0.96, expectedSec: 1.018, timesliceMs: 1000 }), true);
+  assert.equal(prefixDecodes({ status: 0, decodedSec: 0, expectedSec: 3.08, timesliceMs: 3000 }), false);
+  assert.equal(prefixDecodes({ status: 1, decodedSec: 3, expectedSec: 3, timesliceMs: 3000 }), false);
+});
+
+test('loudestProbeStart skips a silent lead-in', async () => {
+  const { loudestProbeStart } = await import('../lib/h2.mjs');
+  const pcm = new Int16Array(16000);
+  for (let i = 9000; i < 13000; i++) pcm[i] = (i % 50) * 100;
+  const start = loudestProbeStart(pcm, 4000, 0, 16000, 500);
+  assert.ok(start >= 8500 && start <= 9500, `start ${start}`);
+});

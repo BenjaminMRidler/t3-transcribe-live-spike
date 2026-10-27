@@ -8,17 +8,22 @@ on:
       plan:
         description: 'full or quick'
         default: 'full'
+      checks_from_run:
+        description: 'Re-run only the checks on the recordings of this earlier run id'
+        default: ''
   push:
     branches: [main]
 
 permissions:
   contents: read
+  actions: read
 
 env:
   FFMPEG_IMAGE: mwader/static-ffmpeg:7.1@sha256:a8090df5f5608daef387e1b2e93b98aaacb4d92153ad904e7d715c725724fca4
 
 jobs:
   prepare:
+    if: github.event.inputs.checks_from_run == '' || github.event.inputs.checks_from_run == null
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -98,7 +103,7 @@ jobs:
 
   check:
     needs: browser
-    if: always()
+    if: always() && (needs.browser.result != 'skipped' || github.event.inputs.checks_from_run != '')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -110,11 +115,15 @@ jobs:
         with:
           name: h2-sources
           path: out/h2/sources
+          run-id: ${{ github.event.inputs.checks_from_run || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           pattern: h2-runs-*
           path: out/h2
           merge-multiple: true
+          run-id: ${{ github.event.inputs.checks_from_run || github.run_id }}
+          github-token: ${{ github.token }}
       - run: docker pull "$FFMPEG_IMAGE"
       - name: Checks C0-C5 with the pinned ffmpeg
         run: node h2/check.mjs
