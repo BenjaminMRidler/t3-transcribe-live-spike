@@ -21,6 +21,16 @@ const latency = (rows) => {
   const s = summarizeLatencies(ok);
   return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, round(v, 0)]));
 };
+// Review R-2 (TASK-000011): the methodology counts failures, never drops them. This variant
+// counts each failed request at the client timeout (120 s), which is conservative for fast
+// network errors. Verdicts use it; the ok-only summary is kept alongside for comparison.
+const FAILURE_MS = 120000;
+const latencyCountingFailures = (rows) => {
+  const values = rows.map((r) => (r.ok ? r.ms : Math.max(r.ms, FAILURE_MS)));
+  if (values.length === 0) return { n: 0 };
+  const s = summarizeLatencies(values);
+  return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, round(v, 0)]));
+};
 const cost = (rows) => sum(rows.map((r) => r.usage?.cost ?? 0));
 
 // ---- H1 tiled ----
@@ -48,19 +58,27 @@ for (const windowSec of [3, 4, 5]) {
     entry[model] = {
       wer: round(pooled.wer), substitutions: pooled.substitutions, deletions: pooled.deletions, insertions: pooled.insertions, refWords: pooled.refWords,
       perRep, requests: rows.length, failures: rows.filter((r) => !r.ok).length,
-      latencyMs: latency(rows), requestBytes: rows[0].requestBytes, costUsd: round(cost(rows), 6)
+      latencyMs: latency(rows), latencyMsCountingFailures: latencyCountingFailures(rows), requestBytes: rows[0].requestBytes, costUsd: round(cost(rows), 6)
     };
   }
-  if (entry['0.6b'] && entry['1.7b']) entry.werRatio = round(entry['0.6b'].wer / entry['1.7b'].wer, 3);
+  if (entry['0.6b'] && entry['1.7b']) {
+    entry.werRatio = round(entry['0.6b'].wer / entry['1.7b'].wer, 3);
+    // Review R-3: the ratio over repetitions where neither model had a failed request.
+    const clean = entry['0.6b'].perRep.filter((r, i) => r.failures === 0 && entry['1.7b'].perRep[i]?.failures === 0).map((r) => r.rep);
+    if (clean.length > 0 && clean.length < entry['0.6b'].perRep.length) {
+      const pick = (m) => tiledByRep.flatMap((rows, i) => (clean.includes(i + 1) ? manifest.h1.map((clip) => ({ reference: clip.reference, hypothesis: rows.filter((r) => r.model === m && r.windowSec === windowSec && r.clip === clip.name).sort((a, b) => a.index - b.index).map((r) => (r.ok ? r.text : '')).join(' ') })) : []));
+      entry.werRatioFailureFreeReps = { reps: clean, ratio: round(corpusWer(pick('0.6b')).wer / corpusWer(pick('1.7b')).wer, 3) };
+    }
+  }
   h1.windows[`${windowSec}s`] = entry;
 }
 const w4 = h1.windows['4s'];
 if (w4?.['0.6b'] && w4?.['1.7b']) {
-  h1.verdict = h1Verdict({ wer06: w4['0.6b'].wer, wer17: w4['1.7b'].wer, p95Ms06: w4['0.6b'].latencyMs.p95, samples06: w4['0.6b'].latencyMs.n });
+  h1.verdict = h1Verdict({ wer06: w4['0.6b'].wer, wer17: w4['1.7b'].wer, p95Ms06: w4['0.6b'].latencyMsCountingFailures.p95, samples06: w4['0.6b'].latencyMsCountingFailures.n });
   // Fallback alternatives the vision names (reported, not the verdict).
   h1.fallbacks = {
-    '1.7b at 4 s': { p95Ms: w4['1.7b'].latencyMs.p95 },
-    '0.6b at 5 s': h1.windows['5s']?.['0.6b'] ? { wer: h1.windows['5s']['0.6b'].wer, p95Ms: h1.windows['5s']['0.6b'].latencyMs.p95, ratioVs17At5: h1.windows['5s'].werRatio } : null
+    '1.7b at 4 s': { p95Ms: w4['1.7b'].latencyMs.p95, p95MsCountingFailures: w4['1.7b'].latencyMsCountingFailures.p95 },
+    '0.6b at 5 s': h1.windows['5s']?.['0.6b'] ? { wer: h1.windows['5s']['0.6b'].wer, p95Ms: h1.windows['5s']['0.6b'].latencyMs.p95, p95MsCountingFailures: h1.windows['5s']['0.6b'].latencyMsCountingFailures.p95, ratioVs17At5: h1.windows['5s'].werRatio } : null
   };
 }
 
@@ -71,7 +89,7 @@ for (const model of models) {
   const rows = baseline.filter((r) => r.model === model);
   if (rows.length === 0) continue;
   const w = corpusWer(rows.map((r) => ({ reference: refOf[r.clip], hypothesis: r.ok ? r.text : '' })));
-  h1.fullClipBaseline[model] = { wer: round(w.wer), refWords: w.refWords, requests: rows.length, failures: rows.filter((r) => !r.ok).length, latencyMs: latency(rows), costUsd: round(cost(rows), 6) };
+  h1.fullClipBaseline[model] = { wer: round(w.wer), refWords: w.refWords, requests: rows.length, failures: rows.filter((r) => !r.ok).length, latencyMs: latency(rows), latencyMsCountingFailures: latencyCountingFailures(rows), costUsd: round(cost(rows), 6) };
 }
 
 // ---- H1 silence ----
@@ -120,6 +138,7 @@ for (const container of [...new Set(h3Rows.map((r) => r.container))]) {
     rawBytes: [...new Set(original.map((r) => r.rawBytes))],
     requestBytes: [...new Set(finalRows.map((r) => r.requestBytes))],
     latencyMs: latency(finalRows),
+    latencyMsCountingFailures: latencyCountingFailures(finalRows),
     verdict: h3Verdict({ latenciesMs: ok.map((r) => r.ms), failures: finalRows.length - ok.length }, percentile),
     verdictOnRecordedContainer: h3Verdict({ latenciesMs: original.filter((r) => r.ok).map((r) => r.ms), failures: original.filter((r) => !r.ok).length }, percentile),
     wer: ok.length ? round(corpusWer(ok.map((r) => ({ reference: refOf[r.clip], hypothesis: r.text }))).wer) : null,

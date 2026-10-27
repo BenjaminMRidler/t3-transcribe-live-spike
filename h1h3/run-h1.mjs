@@ -9,7 +9,7 @@
 // new request started at most every CADENCE_SEC (declared deviation: 2 concurrent sessions).
 import fs from 'node:fs';
 import path from 'node:path';
-import { transcribe, keyUsage, requireApiKey, baselineRoundTripMs } from './openrouter.mjs';
+import { transcribe, keyUsage, requireApiKey, baselineRoundTripMs, PROVENANCE } from './openrouter.mjs';
 import { OUT_DIR } from './ffmpeg.mjs';
 import { parseWav, sliceWav } from '../lib/wav.mjs';
 import { tiledWindows, estimateSpendUsd, withinBudget } from '../lib/plan.mjs';
@@ -72,7 +72,7 @@ async function runPaced(jobs, logFile, { paced = true } = {}) {
       const audio = job.audio();
       const result = await transcribe({ apiKey, model: MODELS[modelKey], audio, format: job.format });
       fs.appendFileSync(logFile, JSON.stringify({
-        key, at: new Date().toISOString(), model: modelKey, ...job.meta,
+        key, at: new Date().toISOString(), ...PROVENANCE, model: modelKey, ...job.meta,
         start: job.start, end: job.end, audioSec: job.end - job.start, ...result
       }) + '\n');
       if (!result.ok) console.log(`[fail] ${key}: ${result.status} ${result.error}`);
@@ -153,7 +153,7 @@ if (phase === 'calibrate') {
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       nextStart = performance.now() + CADENCE_SEC * 1000;
       const result = await transcribe({ apiKey, model: MODELS['0.6b'], audio: job.audio(), format: 'wav' });
-      fs.appendFileSync(logFile, JSON.stringify({ key: `0.6b|s${s}|${job.key}`, at: new Date().toISOString(), model: '0.6b', stream: s, ...job.meta, audioSec: job.end - job.start, ...result }) + '\n');
+      fs.appendFileSync(logFile, JSON.stringify({ key: `0.6b|s${s}|${job.key}`, at: new Date().toISOString(), ...PROVENANCE, model: '0.6b', stream: s, ...job.meta, audioSec: job.end - job.start, ...result }) + '\n');
     }
   }));
 } else {

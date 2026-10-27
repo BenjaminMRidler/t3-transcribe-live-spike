@@ -37,7 +37,7 @@ function windowMatchesTail(full, window) {
 }
 
 function checkAppend(dir, info) {
-  const e = ext(info.recorderMime);
+  const e = ext(info.recorderMime || info.recorderMimeAfterStart || info.chunks?.[0]?.type);
   const chunkFiles = fs.readdirSync(dir).filter((f) => /^chunk-\d+\.bin$/.test(f)).sort();
   const chunks = chunkFiles.map((f) => fs.readFileSync(path.join(dir, f)));
   const result = { chunks: chunks.length, bytes: chunks.reduce((s, c) => s + c.length, 0) };
@@ -162,7 +162,7 @@ for (const run of fs.readdirSync(runsDir).sort()) {
   if (info.error) { out.runs[run] = { error: info.error, userAgent: info.userAgent }; continue; }
   const started = Date.now();
   try {
-    const base = { mode: info.mode, recorderMime: info.recorderMime, requestedMime: info.requestedMime, timesliceMs: info.timesliceMs, seconds: info.seconds, recordedMs: info.recordedMs, userAgent: info.userAgent };
+    const base = { mode: info.mode, recorderMime: info.recorderMime || info.recorderMimeAfterStart || info.chunks?.[0]?.type, requestedBitrate: info.requestedBitrate, requestedMime: info.requestedMime, timesliceMs: info.timesliceMs, seconds: info.seconds, recordedMs: info.recordedMs, userAgent: info.userAgent };
     out.runs[run] = info.mode === 'segmented' ? { ...base, ...checkSegmented(dir, info, sourcePcm) } : { ...base, ...checkAppend(dir, info) };
     if (info.mode === 'append') {
       const r = out.runs[run];

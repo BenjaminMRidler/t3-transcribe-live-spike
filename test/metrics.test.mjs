@@ -61,6 +61,18 @@ test('corpusWer micro-averages over all reference words', () => {
   assert.equal(result.wer, 1 / 6);
 });
 
+test('corpusWer sums substitutions, deletions and insertions across pairs (review R-5a)', () => {
+  const result = corpusWer([
+    { reference: 'a b c', hypothesis: 'a x c' }, // 1 substitution
+    { reference: 'd e f', hypothesis: 'd f' }, // 1 deletion
+    { reference: 'g h', hypothesis: 'g h i j' } // 2 insertions
+  ]);
+  assert.deepEqual(
+    { s: result.substitutions, d: result.deletions, i: result.insertions, n: result.refWords, e: result.errors },
+    { s: 1, d: 1, i: 2, n: 8, e: 4 }
+  );
+});
+
 test('corpusWer can exceed 1 when insertions dominate', () => {
   assert.equal(corpusWer([{ reference: 'a', hypothesis: 'x y z' }]).wer, 3);
 });
@@ -90,6 +102,12 @@ test('tailCoverage is 1 for a complete transcript and low for a truncated one', 
   assert.ok(tailCoverage(last, 'many words before but the request was cut off early') < 0.3);
   assert.ok(tailCoverage(last, 'words before and so the story end here tonight') >= 0.85);
   assert.throws(() => tailCoverage('...', 'a'), RangeError);
+});
+
+test('tailCoverage counts deletions when the transcript stops early (review R-5b)', () => {
+  // The hypothesis ends 4 words before the reference: only deletions, no substitutions.
+  const last = 'one two three four five six seven eight';
+  assert.equal(tailCoverage(last, 'one two three four'), 0.5);
 });
 
 test('summarizeLatencies reports n, percentiles, max and mean', () => {

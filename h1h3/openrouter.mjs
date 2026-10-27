@@ -5,6 +5,22 @@
 
 const BASE_URL = 'https://openrouter.ai/api/v1';
 
+// Review R-4 (TASK-000011): provenance written with every logged request.
+// Review N-1 (TASK-000012): git runs against the spike folder (spikes/1.6), not the current
+// directory, so the dirty flag covers the harness only.
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const SPIKE_DIR = fileURLToPath(new URL('..', import.meta.url));
+const gitRev = spawnSync('git', ['-C', SPIKE_DIR, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' });
+const gitDirty = spawnSync('git', ['-C', SPIKE_DIR, 'status', '--porcelain', '--', '.'], { encoding: 'utf8' });
+export const PROVENANCE = {
+  harnessCommit: gitRev.status === 0 ? gitRev.stdout.trim() : 'unknown',
+  harnessDirty: gitDirty.status === 0 ? gitDirty.stdout.trim().length > 0 : null,
+  node: process.version,
+  platform: `${process.platform}-${process.arch}`
+};
+
+
 /**
  * One transcription request. Never throws for HTTP errors: the outcome is returned so the
  * harness can log failures instead of dropping them.

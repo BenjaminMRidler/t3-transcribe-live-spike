@@ -97,6 +97,8 @@ try {
     }
   }
   cells.push({ run: id(['append', 'default', 'ts3000', '30s']), mode: 'append', mime: '', timeslice: 3000, source: 'source-30', seconds: 30 });
+  // Bitrate control: the defaults are about 128-150 kbit/s, which makes 5 minutes exceed 5 MB.
+  cells.push({ run: id(['append', 'default', 'ts3000', 'br32k', '30s']), mode: 'append', mime: '', timeslice: 3000, bitrate: 32000, source: 'source-30', seconds: 30 });
   if (plan === 'full') {
     cells.push({ run: id(['append', 'default', 'ts3000', '300s']), mode: 'append', mime: '', timeslice: 3000, source: 'source-300', seconds: 300 });
     for (const segment of [3000, 10000]) {
@@ -105,7 +107,7 @@ try {
   }
 
   for (const cell of cells) {
-    const query = new URLSearchParams({ run: cell.run, mode: cell.mode, mime: cell.mime, timeslice: String(cell.timeslice ?? 1000), segment: String(cell.segment ?? 3000), source: cell.source, seconds: String(cell.seconds) });
+    const query = new URLSearchParams({ run: cell.run, mode: cell.mode, mime: cell.mime, timeslice: String(cell.timeslice ?? 1000), segment: String(cell.segment ?? 3000), bitrate: String(cell.bitrate ?? 0), source: cell.source, seconds: String(cell.seconds) });
     const entry = { ...cell, startedAt: new Date().toISOString() };
     log.runs.push(entry);
     try {

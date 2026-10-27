@@ -60,7 +60,9 @@ jobs:
         include:
           - { os: windows-latest, browser: chrome }
           - { os: windows-latest, browser: edge }
-          - { os: windows-latest, browser: firefox }
+          # Firefox runs on macOS: on the Windows runner its AudioContext never started
+          # (no audio output device; first run 40435912412).
+          - { os: macos-latest, browser: firefox }
           - { os: macos-latest, browser: safari }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45

@@ -6,6 +6,7 @@
 //   segment   segment length in ms (segmented mode)
 //   source    'source-30' or 'source-300' (served WAV)
 //   seconds   recording length in seconds
+//   bitrate   audioBitsPerSecond (0 or absent = browser default)
 // window.__h2 exposes progress for the WebDriver driver: { state, error, info }.
 (function () {
   'use strict';
@@ -21,6 +22,7 @@
   var segmentMs = Number(params.get('segment') || 3000);
   var source = params.get('source') || 'source-30';
   var seconds = Number(params.get('seconds') || 30);
+  var bitrate = Number(params.get('bitrate') || 0); // 0 = browser default
   var statusEl = document.getElementById('status');
   var h2 = window.__h2 = { state: 'idle', error: null, info: null, uploads: 0 };
   var pending = [];
@@ -45,6 +47,7 @@
   }
   function makeRecorder(stream) {
     var options = mime ? { mimeType: mime } : {};
+    if (bitrate > 0) options.audioBitsPerSecond = bitrate;
     return new MediaRecorder(stream, options);
   }
 
@@ -52,7 +55,12 @@
     h2.state = 'starting';
     var t0 = performance.now();
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (ctx.state === 'suspended') await ctx.resume();
+    // A context with no audio output device may never start (seen in headless Firefox on a
+    // Windows runner): fail fast with the state instead of hanging.
+    if (ctx.state === 'suspended') {
+      await Promise.race([ctx.resume(), new Promise(function (r) { setTimeout(r, 5000); })]);
+    }
+    if (ctx.state !== 'running') throw new Error('AudioContext did not start (state=' + ctx.state + ')');
     var response = await fetch('/' + source + '.wav');
     if (!response.ok) throw new Error('source fetch failed ' + response.status);
     var buffer = await ctx.decodeAudioData(await response.arrayBuffer());
@@ -62,7 +70,7 @@
     node.connect(dest);
     var info = {
       run: run, mode: mode, requestedMime: mime, timesliceMs: timeslice, segmentMs: segmentMs, source: source,
-      seconds: seconds, userAgent: navigator.userAgent, support: supportInfo(), contextSampleRate: ctx.sampleRate,
+      seconds: seconds, requestedBitrate: bitrate, userAgent: navigator.userAgent, support: supportInfo(), contextSampleRate: ctx.sampleRate,
       chunks: [], segments: []
     };
     h2.info = info;
@@ -84,6 +92,7 @@
       node.start();
       recorder.start(timeslice);
       recStart = performance.now();
+      info.recorderMimeAfterStart = recorder.mimeType;
       info.recorderStartedMs = Math.round(recStart - t0);
       h2.state = 'recording';
       log('recording ' + seconds + ' s as ' + recorder.mimeType);
